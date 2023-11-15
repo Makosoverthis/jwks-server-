@@ -1,0 +1,87 @@
+from flask import Flask, request, jsonify
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption
+import jwt
+import datetime
+import os
+
+app = Flask(__name__)
+
+# This line creates a dictionary to store all ofkeys
+keys = {}
+
+# key def 
+def generate_key():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    public_key = private_key.public_key()
+
+    private_pem = private_key.private_bytes(
+        Encoding.PEM,
+        PrivateFormat.PKCS8,
+        NoEncryption()
+    ).decode('utf-8')
+
+    # public pem info 
+    public_pem = public_key.public_bytes(
+        Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode('utf-8')
+    # random 8 
+    kid = os.urandom(8).hex()
+
+    # I Set the key's expiration time with this line 
+    expiration = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    # This holds the key and experations 
+    keys[kid] = {
+        'kid': kid,
+        'private_key': private_pem,
+        'public_key': public_pem,
+        'expiration': expiration,
+    }
+    # This returns kid function
+    return kid
+
+@app.route('/jwks', methods=['GET'])
+def jwks():
+
+    # This stores the current time 
+    current_time = datetime.datetime.utcnow()
+    jwks = {
+        'keys': [key for key in keys.values() if key['expiration'] > current_time]
+    }
+    return jsonify(jwks)
+
+@app.route('/auth', methods=['POST'])
+def authentication():
+    # This stores the user_name and pass_word for authentication
+    data = request.get_json()
+    username = data.get('username')  # Updated to 'username'
+    password = data.get('password')  # Updated to 'password'
+
+    # After Authentication is successful it will generate a new JWT using the latest key.
+    kid = generate_key()
+    private_key_pem = keys[kid]['private_key']
+
+    # Im adding both times here 
+    payload = {
+        'username': username,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=20),
+    }
+
+    token = jwt.encode(payload, private_key_pem, algorithm='RS256', headers={'kid': kid})
+
+    return jsonify({'token': token})
+
+# Closing my code
+# This runs on 0.0.0.0 and port 8080
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
